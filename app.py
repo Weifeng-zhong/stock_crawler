@@ -20,34 +20,33 @@ SZSE_HEADERS = {
 }
 
 SSE_URL = "https://query.sse.com.cn/commonQuery.do"
-SZSE_URL = "http://www.szse.cn/api/report/ShowReport"
+SZSE_URLS = [
+    "https://www.szse.cn/api/report/ShowReport",
+    "http://www.szse.cn/api/report/ShowReport"
+]
 
 @st.cache_data(ttl=3600)
 def fetch_sse_stock(date_str):
-    params = {
-        "sqlId": "COMMON_SSE_SJ_GPSJ_CJGK_MRGK_C",
-        "PRODUCT_CODE": "17",
-        "type": "inParams",
-        "SEARCH_DATE": date_str
-    }
-    r = requests.get(SSE_URL, params=params, headers=SSE_HEADERS, timeout=15)
-    data = r.json()
-    if data["result"]:
-        return float(data["result"][0]["TRADE_AMT"])
+    try:
+        params = {"sqlId": "COMMON_SSE_SJ_GPSJ_CJGK_MRGK_C", "PRODUCT_CODE": "17", "type": "inParams", "SEARCH_DATE": date_str}
+        r = requests.get(SSE_URL, params=params, headers=SSE_HEADERS, timeout=15)
+        data = r.json()
+        if data.get("result"):
+            return float(data["result"][0]["TRADE_AMT"])
+    except Exception:
+        pass
     return None
 
 @st.cache_data(ttl=3600)
 def fetch_sse_fund(date_str):
-    params = {
-        "sqlId": "COMMON_SSE_SJ_GPSJ_CJGK_MRGK_C",
-        "PRODUCT_CODE": "05",
-        "type": "inParams",
-        "SEARCH_DATE": date_str
-    }
-    r = requests.get(SSE_URL, params=params, headers=SSE_HEADERS, timeout=15)
-    data = r.json()
-    if data["result"]:
-        return float(data["result"][0]["TRADE_AMT"])
+    try:
+        params = {"sqlId": "COMMON_SSE_SJ_GPSJ_CJGK_MRGK_C", "PRODUCT_CODE": "05", "type": "inParams", "SEARCH_DATE": date_str}
+        r = requests.get(SSE_URL, params=params, headers=SSE_HEADERS, timeout=15)
+        data = r.json()
+        if data.get("result"):
+            return float(data["result"][0]["TRADE_AMT"])
+    except Exception:
+        pass
     return None
 
 @st.cache_data(ttl=3600)
@@ -59,25 +58,29 @@ def fetch_szse_data(date_str):
         "txtQueryDate": date_str,
         "random": "0.39339437497296137"
     }
-    r = requests.get(SZSE_URL, params=params, headers=SZSE_HEADERS, timeout=15)
-    df = pd.read_excel(io.BytesIO(r.content), engine="openpyxl")
-    df["证券类别"] = df["证券类别"].str.strip()
-    df.iloc[:, 2:] = df.iloc[:, 2:].map(lambda x: str(x).replace(",", ""))
-    result = {}
-    for _, row in df.iterrows():
-        cat = str(row.iloc[0])
-        amt = float(str(row.iloc[2]).replace(",", "")) / 1e8
-        if cat == "股票":
-            result["stock"] = round(amt, 2)
-        elif cat == "基金":
-            result["fund"] = round(amt, 2)
-    return result.get("stock"), result.get("fund")
+    for url in SZSE_URLS:
+        try:
+            r = requests.get(url, params=params, headers=SZSE_HEADERS, timeout=15)
+            df = pd.read_excel(io.BytesIO(r.content), engine="openpyxl")
+            df["证券类别"] = df["证券类别"].str.strip()
+            df.iloc[:, 2:] = df.iloc[:, 2:].map(lambda x: str(x).replace(",", ""))
+            result = {}
+            for _, row in df.iterrows():
+                cat = str(row.iloc[0])
+                amt = float(str(row.iloc[2]).replace(",", "")) / 1e8
+                if cat == "股票":
+                    result["stock"] = round(amt, 2)
+                elif cat == "基金":
+                    result["fund"] = round(amt, 2)
+            return result.get("stock"), result.get("fund")
+        except Exception:
+            continue
+    return None, None
 
 tab1, tab2 = st.tabs(["📅 单日查询", "📊 批量查询"])
 
 with tab1:
     today = datetime.now()
-    default_date = today - timedelta(days=1) if today.weekday() == 0 else today
     date_input = st.date_input("选择日期", value=today, max_value=today)
 
     if st.button("查询", type="primary", use_container_width=True):
@@ -90,17 +93,25 @@ with tab1:
         if sse_stock is None and sse_fund is None and sz_stock is None and sz_fund is None:
             st.warning("该日无数据，可能为非交易日。")
         else:
-            data = {
-                "交易所": ["上交所", "深交所"],
-                "股票成交额(亿元)": [sse_stock if sse_stock else "-", sz_stock if sz_stock else "-"],
-                "基金成交额(亿元)": [sse_fund if sse_fund else "-", sz_fund if sz_fund else "-"]
-            }
-            if sse_stock and sz_stock:
-                total = round(sse_stock + sz_stock, 2)
-                data["股票成交额(亿元)"].append(total)
-                data["基金成交额(亿元)"].append("-")
-                data["交易所"].append("沪深合计")
-            df = pd.DataFrame(data)
+            rows = []
+            row1, row2, row3 = {}, {}, {}
+            row1["交易所"] = "上交所"
+            row1["股票成交额(亿元)"] = sse_stock if sse_stock is not None else "-"
+            row1["基金成交额(亿元)"] = sse_fund if sse_fund is not None else "-"
+            rows.append(row1)
+
+            row2["交易所"] = "深交所"
+            row2["股票成交额(亿元)"] = sz_stock if sz_stock is not None else "-"
+            row2["基金成交额(亿元)"] = sz_fund if sz_fund is not None else "-"
+            rows.append(row2)
+
+            if sse_stock is not None and sz_stock is not None:
+                row3["交易所"] = "沪深合计"
+                row3["股票成交额(亿元)"] = round(sse_stock + sz_stock, 2)
+                row3["基金成交额(亿元)"] = "-"
+                rows.append(row3)
+
+            df = pd.DataFrame(rows)
             st.dataframe(df, hide_index=True, use_container_width=True)
 
             csv = df.to_csv(index=False, encoding="utf-8-sig")
@@ -127,13 +138,13 @@ with tab2:
                 sse_s = fetch_sse_stock(date_str)
                 sse_f = fetch_sse_fund(date_str)
                 sz_s, sz_f = fetch_szse_data(date_str)
-                if sse_s or sse_f or sz_s or sz_f:
+                if sse_s is not None or sse_f is not None or sz_s is not None or sz_f is not None:
                     results.append({
                         "日期": date_str,
-                        "上交所股票(亿元)": sse_s if sse_s else "-",
-                        "上交所基金(亿元)": sse_f if sse_f else "-",
-                        "深交所股票(亿元)": sz_s if sz_s else "-",
-                        "深交所基金(亿元)": sz_f if sz_f else "-"
+                        "上交所股票(亿元)": sse_s if sse_s is not None else "-",
+                        "上交所基金(亿元)": sse_f if sse_f is not None else "-",
+                        "深交所股票(亿元)": sz_s if sz_s is not None else "-",
+                        "深交所基金(亿元)": sz_f if sz_f is not None else "-"
                     })
                 progress.progress((i + 1) / len(dates))
             status.empty()
