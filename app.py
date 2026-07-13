@@ -4,6 +4,22 @@ import pandas as pd
 import io
 from datetime import datetime, timedelta
 
+def is_trading_day(dt):
+    if dt.weekday() >= 5:
+        return False
+    y, m, d = dt.year, dt.month, dt.day
+    holidays = {
+        (2026, 1, 1), (2026, 1, 2), (2026, 1, 3),
+        (2026, 1, 26), (2026, 1, 27), (2026, 1, 28), (2026, 1, 29), (2026, 1, 30),
+        (2026, 2, 2), (2026, 2, 3), (2026, 2, 4), (2026, 2, 5), (2026, 2, 6),
+        (2026, 4, 6), (2026, 4, 7),
+        (2026, 5, 1), (2026, 5, 2), (2026, 5, 3),
+        (2026, 5, 28), (2026, 5, 29),
+        (2026, 10, 1), (2026, 10, 2), (2026, 10, 3), (2026, 10, 4), (2026, 10, 5),
+        (2026, 10, 6), (2026, 10, 7), (2026, 10, 8), (2026, 10, 9),
+    }
+    return (y, m, d) not in holidays
+
 st.set_page_config(page_title="沪深成交数据查询", page_icon="📈", layout="centered")
 
 st.title("📈 沪深交易所日成交数据")
@@ -85,37 +101,33 @@ with tab1:
 
     if st.button("查询", type="primary", use_container_width=True):
         date_str = date_input.strftime("%Y-%m-%d")
-        with st.spinner(f"正在获取 {date_str} 数据..."):
-            sse_stock = fetch_sse_stock(date_str)
-            sse_fund = fetch_sse_fund(date_str)
-            sz_stock, sz_fund = fetch_szse_data(date_str)
 
-        if sse_stock is None and sse_fund is None and sz_stock is None and sz_fund is None:
-            st.warning("该日无数据，可能为非交易日。")
+        if not is_trading_day(date_input):
+            st.warning(f"{date_str} 为非交易日（周末或法定节假日），当日无成交数据。")
         else:
-            rows = []
-            row1, row2, row3 = {}, {}, {}
-            row1["交易所"] = "上交所"
-            row1["股票成交额(亿元)"] = sse_stock if sse_stock is not None else "-"
-            row1["基金成交额(亿元)"] = sse_fund if sse_fund is not None else "-"
-            rows.append(row1)
+            with st.spinner(f"正在获取 {date_str} 数据..."):
+                sse_stock = fetch_sse_stock(date_str)
+                sse_fund = fetch_sse_fund(date_str)
+                sz_stock, sz_fund = fetch_szse_data(date_str)
 
-            row2["交易所"] = "深交所"
-            row2["股票成交额(亿元)"] = sz_stock if sz_stock is not None else "-"
-            row2["基金成交额(亿元)"] = sz_fund if sz_fund is not None else "-"
-            rows.append(row2)
+            if sse_stock is None and sse_fund is None and sz_stock is None and sz_fund is None:
+                st.warning(f"{date_str} 无数据，可能为非交易日或数据尚未发布。")
+            else:
+                rows = []
+                for name, ss, sf in [("上交所", sse_stock, sse_fund), ("深交所", sz_stock, sz_fund)]:
+                    rows.append({
+                        "交易所": name,
+                        "股票(亿元)": ss if ss is not None else "-",
+                        "股票(万亿元)": f"{ss/10000:.4f}" if ss is not None else "-",
+                        "基金(亿元)": sf if sf is not None else "-",
+                        "基金(万亿元)": f"{sf/10000:.4f}" if sf is not None else "-",
+                    })
 
-            if sse_stock is not None and sz_stock is not None:
-                row3["交易所"] = "沪深合计"
-                row3["股票成交额(亿元)"] = round(sse_stock + sz_stock, 2)
-                row3["基金成交额(亿元)"] = "-"
-                rows.append(row3)
+                df = pd.DataFrame(rows)
+                st.dataframe(df, hide_index=True, use_container_width=True)
 
-            df = pd.DataFrame(rows)
-            st.dataframe(df, hide_index=True, use_container_width=True)
-
-            csv = df.to_csv(index=False, encoding="utf-8-sig")
-            st.download_button("下载 CSV", data=csv, file_name=f"stock_data_{date_str}.csv", mime="text/csv")
+                csv = df.to_csv(index=False, encoding="utf-8-sig")
+                st.download_button("下载 CSV", data=csv, file_name=f"stock_data_{date_str}.csv", mime="text/csv")
 
 with tab2:
     col1, col2 = st.columns(2)
