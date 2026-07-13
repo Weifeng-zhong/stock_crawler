@@ -17,6 +17,22 @@ SZSE_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 }
 
+def is_trading_day(dt):
+    if dt.weekday() >= 5:
+        return False
+    y, m, d = dt.year, dt.month, dt.day
+    holidays = {
+        (2026, 1, 1), (2026, 1, 2), (2026, 1, 3),
+        (2026, 1, 26), (2026, 1, 27), (2026, 1, 28), (2026, 1, 29), (2026, 1, 30),
+        (2026, 2, 2), (2026, 2, 3), (2026, 2, 4), (2026, 2, 5), (2026, 2, 6),
+        (2026, 4, 6), (2026, 4, 7),
+        (2026, 5, 1), (2026, 5, 2), (2026, 5, 3),
+        (2026, 5, 28), (2026, 5, 29),
+        (2026, 10, 1), (2026, 10, 2), (2026, 10, 3), (2026, 10, 4), (2026, 10, 5),
+        (2026, 10, 6), (2026, 10, 7), (2026, 10, 8), (2026, 10, 9),
+    }
+    return (y, m, d) not in holidays
+
 def fetch_sse(date_str, code):
     try:
         r = requests.get("https://query.sse.com.cn/commonQuery.do", params={
@@ -70,25 +86,28 @@ with tab1:
     d = st.date_input("选择日期", value=today, max_value=today)
     if st.button("查询", type="primary", use_container_width=True):
         ds = d.strftime("%Y-%m-%d")
-        with st.spinner(f"获取 {ds} 数据..."):
-            ss = fetch_sse_stock(ds)
-            sf = fetch_sse_fund(ds)
-            zs, zf = fetch_szse(ds)
-        if ss is None and sf is None and zs is None and zf is None:
-            st.warning(f"{ds} 无数据")
+        if not is_trading_day(d):
+            st.warning(f"{ds} 为非交易日（周末或法定节假日），当日无成交数据。")
         else:
-            rows = []
-            for name, s, f in [("上交所", ss, sf), ("深交所", zs, zf)]:
-                rows.append({
-                    "交易所": name,
-                    "股票(亿元)": s if s is not None else "-",
-                    "股票(万亿元)": f"{s/10000:.4f}" if s is not None else "-",
-                    "基金(亿元)": f if f is not None else "-",
-                    "基金(万亿元)": f"{f/10000:.4f}" if f is not None else "-",
-                })
-            st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
-            csv = pd.DataFrame(rows).to_csv(index=False, encoding="utf-8-sig")
-            st.download_button("下载 CSV", csv, f"stock_{ds}.csv")
+            with st.spinner(f"获取 {ds} 数据..."):
+                ss = fetch_sse_stock(ds)
+                sf = fetch_sse_fund(ds)
+                zs, zf = fetch_szse(ds)
+            if ss is None and sf is None and zs is None and zf is None:
+                st.warning(f"{ds} 无数据")
+            else:
+                rows = []
+                for name, s, f in [("上交所", ss, sf), ("深交所", zs, zf)]:
+                    rows.append({
+                        "交易所": name,
+                        "股票(亿元)": s if s is not None else "-",
+                        "股票(万亿元)": f"{s/10000:.4f}" if s is not None else "-",
+                        "基金(亿元)": f if f is not None else "-",
+                        "基金(万亿元)": f"{f/10000:.4f}" if f is not None else "-",
+                    })
+                st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+                csv = pd.DataFrame(rows).to_csv(index=False, encoding="utf-8-sig")
+                st.download_button("下载 CSV", csv, f"stock_{ds}.csv")
 
 with tab2:
     c1, c2 = st.columns(2)
