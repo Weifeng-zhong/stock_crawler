@@ -114,7 +114,10 @@ def main():
         return
 
     now = datetime.now(BJ_TZ)
-    yesterday = prev_trading_day(now)
+    yesterday = now - timedelta(days=1)
+    if not is_trading_day(yesterday):
+        print(f"{yesterday.date()} 非交易日，跳过")
+        return
     date_str = yesterday.strftime("%Y-%m-%d")
 
     last_sent = config.get("last_sent_date", "")
