@@ -189,7 +189,7 @@ with tabs[1]:
 
 with tabs[2]:
     st.markdown("### 收盘数据邮件推送设置")
-    st.caption("每个交易日收盘后自动获取数据并发送到指定邮箱")
+    st.caption("每个交易日收盘后自动获取当日最新数据并发送到指定邮箱")
 
     token = st.secrets.get("GITHUB_TOKEN", "")
     if not token:
@@ -198,16 +198,22 @@ with tabs[2]:
         config = read_config(token)
         saved_email = config.get("receiver_email", "")
         saved_freq = config.get("frequency", "每个交易日")
+        saved_hour = config.get("send_hour", 18)
 
         email = st.text_input("接收邮箱", value=saved_email, placeholder="your@email.com")
         freq = st.selectbox("推送频率", ["每个交易日", "每周一", "每月首个交易日"],
                            index=["每个交易日", "每周一", "每月首个交易日"].index(saved_freq) if saved_freq in ["每个交易日", "每周一", "每月首个交易日"] else 0)
+        hour = st.selectbox("发送时间", range(17, 23), index=saved_hour - 17,
+                           format_func=lambda h: f"{h}:00 北京时间")
+
+        st.markdown("**邮件格式示例：**")
+        st.code("当日成交数据（单位：万亿元）\n\n日期 | 上交所股票 | 上交所基金 | 深交所股票 | 深交所基金\n--- | --- | --- | --- | ---\n2026-07-10 | 1.56 | 0.36 | 1.83 | 0.18\n\n(数据来源：上交所、深交所官网)")
 
         if st.button("保存设置", type="primary"):
             if not email:
                 st.error("请输入接收邮箱")
             else:
-                new_config = {"receiver_email": email, "frequency": freq}
+                new_config = {"receiver_email": email, "frequency": freq, "send_hour": hour}
                 sha = None
                 try:
                     r = requests.get(GH_API, headers={"Authorization": f"Bearer {token}"})
@@ -217,19 +223,12 @@ with tabs[2]:
                     pass
 
                 if write_config(token, new_config, sha):
-                    st.success(f"保存成功！每个{freq}收盘后将发送到 {email}")
+                    st.success(f"保存成功！{freq} {hour}:00 收盘后将发送到 {email}")
                 else:
                     st.error("保存失败，请检查 GITHUB_TOKEN 是否有 repo 权限")
 
         if saved_email:
-            info = f"当前配置：发送到 {saved_email}，频率：{saved_freq}"
-            if saved_freq == "每个交易日":
-                info += "（周一至周五 17:00 左右）"
-            elif saved_freq == "每周一":
-                info += "（每周一收盘后）"
-            else:
-                info += "（每月首个交易日收盘后）"
-            st.info(info)
+            st.info(f"当前配置：发送到 {saved_email}，频率：{saved_freq}，时间：{saved_hour}:00")
 
 st.markdown("---")
 st.caption("仅供参考")
