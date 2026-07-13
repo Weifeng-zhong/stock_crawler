@@ -147,11 +147,12 @@ def main():
         print(f"当前 {now.hour}:00，未到设定发送时间 {send_hour}:00，跳过")
         return
 
+    if not is_trading_day(today):
+        print(f"{today.date()} 非交易日，跳过")
+        return
+
     last_sent = config.get("last_sent_date", "")
     date_to_fetch = today.strftime("%Y-%m-%d")
-
-    if not is_trading_day(today):
-        date_to_fetch = prev_trading_day(today).strftime("%Y-%m-%d")
 
     if date_to_fetch == last_sent:
         print(f"{date_to_fetch} 已发送过，跳过")
