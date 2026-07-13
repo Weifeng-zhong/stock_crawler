@@ -163,10 +163,26 @@ with tab2:
             progress.empty()
 
             if results:
-                df = pd.DataFrame(results)
-                st.dataframe(df, hide_index=True, use_container_width=True)
-                csv = df.to_csv(index=False, encoding="utf-8-sig")
-                st.download_button("下载 CSV", data=csv, file_name=f"batch_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.csv", mime="text/csv")
+                df_yi = pd.DataFrame([{
+                    "日期": r["日期"],
+                    "上交所股票(亿元)": r["上交所股票(亿元)"],
+                    "上交所基金(亿元)": r["上交所基金(亿元)"],
+                    "深交所股票(亿元)": r["深交所股票(亿元)"],
+                    "深交所基金(亿元)": r["深交所基金(亿元)"],
+                } for r in results])
+
+                df_wan = df_yi.copy()
+                for col in df_wan.columns[1:]:
+                    df_wan[col] = df_wan[col].apply(lambda x: f"{float(x)/10000:.4f}" if x != "-" else "-")
+
+                st.subheader("单位：亿元")
+                st.dataframe(df_yi, hide_index=True, use_container_width=True)
+
+                st.subheader("单位：万亿元")
+                st.dataframe(df_wan, hide_index=True, use_container_width=True)
+
+                csv = df_yi.to_csv(index=False, encoding="utf-8-sig")
+                st.download_button("下载 CSV（亿元）", data=csv, file_name=f"batch_yi_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.csv", mime="text/csv")
             else:
                 st.warning("所选日期范围内无数据。")
 
