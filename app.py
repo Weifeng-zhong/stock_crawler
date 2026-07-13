@@ -5,6 +5,9 @@ import io
 import random
 import json
 import concurrent.futures
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta, date
 
 st.set_page_config(page_title="沪深成交数据查询", layout="centered")
@@ -38,6 +41,12 @@ def is_trading_day(dt):
         (2026, 10, 6), (2026, 10, 7), (2026, 10, 8), (2026, 10, 9),
     }
     return (y, m, d) not in holidays
+
+def prev_trading_day(dt):
+    d = dt - timedelta(days=1)
+    while not is_trading_day(d):
+        d -= timedelta(days=1)
+    return d
 
 def fetch_sse(date_str, code):
     try:
@@ -114,6 +123,18 @@ def write_config(token, config, sha=None):
 def base64_encode(s):
     import base64
     return base64.b64encode(s.encode()).decode()
+
+def send_email(subject, body, mail_to):
+    mail_user = st.secrets["MAIL_USER"]
+    mail_pass = st.secrets["MAIL_PASS"]
+    msg = MIMEMultipart()
+    msg["From"] = mail_user
+    msg["To"] = mail_to
+    msg["Subject"] = subject
+    msg.attach(MIMEText(body, "plain", "utf-8"))
+    with smtplib.SMTP_SSL("smtp.163.com", 465, timeout=30) as s:
+        s.login(mail_user, mail_pass)
+        s.send_message(msg)
 
 today = datetime.now()
 tabs = st.tabs(["单日查询", "批量查询", "推送设置"])
@@ -209,7 +230,11 @@ with tabs[2]:
             write_config(token, cfg, sha)
 
         st.markdown("### 邮件推送设置")
-        st.caption("每天早上 9:00 (北京时间) 自动推送前一交易日数据到所有已订阅邮箱")
+        st.caption("每天早上 9:00 (北京时间) 自动推送前一交易日数据到所有已订阅邮箱。添加邮箱后立即发送验证邮件。")
+
+        can_send = "MAIL_USER" in st.secrets and "MAIL_PASS" in st.secrets
+        if not can_send:
+            st.info("如需添加时自动发送验证邮件，请在 Streamlit Cloud Secrets 中添加 MAIL_USER 和 MAIL_PASS（163 邮箱+授权码）")
 
         st.markdown("**已订阅邮箱：**")
         if saved_emails:
@@ -232,7 +257,27 @@ with tabs[2]:
             else:
                 saved_emails.append(new_email)
                 save_emails(saved_emails, token, config)
-                st.success(f"已添加 {new_email}")
+
+                if can_send:
+                    try:
+                        latest = prev_trading_day(datetime.now())
+                        ds = latest.strftime("%Y-%m-%d")
+                        with st.spinner(f"获取 {ds} 数据并发送验证邮件..."):
+                            ss, sf, zs, zf = fetch_all(ds)
+                        if any(x is not None for x in [ss, sf, zs, zf]):
+                            def v(x):
+                                return f"{x/10000:.2f}" if x is not None else "-"
+                            line = f"{ds} | {v(ss)} | {v(sf)} | {v(zs)} | {v(zf)}"
+                            subject = f"沪深成交数据 {ds}（验证邮件）"
+                            body = f"订阅验证 - 前一交易日成交数据（单位：万亿元）\n\n日期 | 上交所股票 | 上交所基金 | 深交所股票 | 深交所基金\n--- | --- | --- | --- | ---\n{line}\n\n(数据来源：上交所、深交所官网)"
+                            send_email(subject, body, new_email)
+                            st.success(f"已添加 {new_email}，验证邮件已发送")
+                        else:
+                            st.success(f"已添加 {new_email}（{ds} 无数据，未发送验证邮件）")
+                    except Exception as e:
+                        st.success(f"已添加 {new_email}（验证邮件发送失败：{e}）")
+                else:
+                    st.success(f"已添加 {new_email}")
                 st.rerun()
 
         st.markdown("**邮件格式示例：**")
