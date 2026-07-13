@@ -101,9 +101,9 @@ with tab1:
                     rows.append({
                         "交易所": name,
                         "股票(亿元)": s if s is not None else "-",
-                        "股票(万亿元)": f"{s/10000:.4f}" if s is not None else "-",
-                        "基金(亿元)": f if f is not None else "-",
-                        "基金(万亿元)": f"{f/10000:.4f}" if f is not None else "-",
+"股票(万亿元)": f"{s/10000:.2f}" if s is not None else "-",
+                    "基金(亿元)": f if f is not None else "-",
+                    "基金(万亿元)": f"{f/10000:.2f}" if f is not None else "-",
                     })
                 st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
                 csv = pd.DataFrame(rows).to_csv(index=False, encoding="utf-8-sig")
@@ -143,7 +143,7 @@ with tab2:
                 st.dataframe(df, hide_index=True, use_container_width=True)
                 df2 = df.copy()
                 for c in df2.columns[1:]:
-                    df2[c] = df2[c].apply(lambda x: f"{float(x)/10000:.4f}" if x != "-" else "-")
+                    df2[c] = df2[c].apply(lambda x: f"{float(x)/10000:.2f}" if x != "-" else "-")
                 st.markdown("**单位：万亿元**")
                 st.dataframe(df2, hide_index=True, use_container_width=True)
                 st.download_button("下载 CSV", df.to_csv(index=False, encoding="utf-8-sig"),
