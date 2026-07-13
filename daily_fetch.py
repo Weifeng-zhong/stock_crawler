@@ -2,7 +2,7 @@ import smtplib
 import requests
 import os
 import random
-import sys
+import json
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timezone, timedelta
@@ -34,6 +34,15 @@ def is_trading_day(dt):
         return False
     return (dt.year, dt.month, dt.day) not in HOLIDAYS_2026
 
+def is_first_trading_day_of_month(dt):
+    if not is_trading_day(dt):
+        return False
+    day = dt.day
+    for d in range(1, day):
+        if is_trading_day(dt.replace(day=d)):
+            return False
+    return True
+
 def fetch_sse(date_str, code):
     try:
         r = requests.get("https://query.sse.com.cn/commonQuery.do", params={
@@ -54,6 +63,8 @@ def fetch_sse_fund(date_str):
     return fetch_sse(date_str, "05")
 
 def fetch_szse(date_str):
+    import pandas as pd
+    import io
     params = {
         "SHOWTYPE": "xlsx", "CATALOGID": "1803_sczm", "TABKEY": "tab1",
         "txtQueryDate": date_str, "random": str(random.random())
@@ -61,8 +72,6 @@ def fetch_szse(date_str):
     for url in ["https://www.szse.cn/api/report/ShowReport", "http://www.szse.cn/api/report/ShowReport"]:
         try:
             r = requests.get(url, params=params, headers=SZSE_HEADERS, timeout=15)
-            import pandas as pd
-            import io
             df = pd.read_excel(io.BytesIO(r.content), engine="openpyxl")
             df["证券类别"] = df["证券类别"].str.strip()
             result = {"stock": None, "fund": None}
@@ -82,15 +91,9 @@ def fetch_szse(date_str):
             continue
     return None, None
 
-def format_data(date_str, ss, sf, zs, zf):
-    def v(x):
-        return f"{x/10000:.2f}" if x is not None else "-"
-    return f"{date_str} | {v(ss)} | {v(sf)} | {v(zs)} | {v(zf)}"
-
-def send_email(subject, body):
+def send_email(subject, body, mail_to):
     mail_user = os.environ["MAIL_USER"]
     mail_pass = os.environ["MAIL_PASS"]
-    mail_to = os.environ.get("MAIL_TO", mail_user)
 
     msg = MIMEMultipart()
     msg["From"] = mail_user
@@ -103,12 +106,31 @@ def send_email(subject, body):
         s.send_message(msg)
 
 def main():
+    config = {"receiver_email": "", "frequency": "每个交易日"}
+    try:
+        with open("config.json") as f:
+            config.update(json.load(f))
+    except Exception:
+        pass
+
+    mail_to = config.get("receiver_email") or os.environ.get("MAIL_TO", "")
+    if not mail_to:
+        print("未设置接收邮箱，跳过")
+        return
+
     now = datetime.now(BJ_TZ)
     date_str = now.strftime("%Y-%m-%d")
+    freq = config.get("frequency", "每个交易日")
+
+    if freq == "每周一" and now.weekday() != 0:
+        print(f"{date_str} 非周一，跳过")
+        return
+    if freq == "每月首个交易日" and not is_first_trading_day_of_month(now):
+        print(f"{date_str} 非本月首个交易日，跳过")
+        return
 
     if not is_trading_day(now):
         print(f"{date_str} 非交易日，跳过")
-        send_email(f"今日休市 {date_str}", f"{date_str} 非交易日，无数据。")
         return
 
     print(f"获取 {date_str} 数据...")
@@ -117,16 +139,18 @@ def main():
     zs, zf = fetch_szse(date_str)
 
     if ss is None and sf is None and zs is None and zf is None:
-        print(f"{date_str} 无数据（可能数据尚未发布）")
-        send_email(f"数据未就绪 {date_str}", f"{date_str} 数据尚未发布，可能还未到收盘时间。")
+        print(f"{date_str} 无数据")
         return
 
-    line = format_data(date_str, ss, sf, zs, zf)
+    def v(x):
+        return f"{x/10000:.2f}" if x is not None else "-"
+
+    line = f"{date_str} | {v(ss)} | {v(sf)} | {v(zs)} | {v(zf)}"
     print(line)
 
     subject = f"沪深成交数据 {date_str}"
     body = f"当日成交数据（单位：万亿元）\n\n日期 | 上交所股票 | 上交所基金 | 深交所股票 | 深交所基金\n--- | --- | --- | --- | ---\n{line}\n\n(数据来源：上交所、深交所官网)"
-    send_email(subject, body)
+    send_email(subject, body, mail_to)
     print("邮件已发送")
 
 if __name__ == "__main__":

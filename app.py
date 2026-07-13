@@ -3,12 +3,16 @@ import requests
 import pandas as pd
 import io
 import random
+import json
 import concurrent.futures
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 
 st.set_page_config(page_title="沪深成交数据查询", layout="centered")
 st.title("沪深交易所日成交数据")
 st.caption("数据来源：上海证券交易所 & 深圳证券交易所")
+
+GH_REPO = "Weifeng-zhong/stock_crawler"
+GH_API = f"https://api.github.com/repos/{GH_REPO}/contents/config.json"
 
 SSE_HEADERS = {
     "Referer": "https://www.sse.com.cn/",
@@ -92,10 +96,29 @@ def fetch_all(date_str):
         sz_stock, sz_fund = zf.result()
         return sf.result(), ff.result(), sz_stock, sz_fund
 
-today = datetime.now()
-tab1, tab2 = st.tabs(["单日查询", "批量查询"])
+def read_config(token):
+    r = requests.get(GH_API, headers={"Authorization": f"Bearer {token}"})
+    if r.status_code == 404:
+        return {}
+    content = json.loads(r.json()["content"])
+    return content
 
-with tab1:
+def write_config(token, config, sha=None):
+    headers = {"Authorization": f"Bearer {token}"}
+    payload = {"message": "Update push config", "content": base64_encode(json.dumps(config, ensure_ascii=False, indent=2))}
+    if sha:
+        payload["sha"] = sha
+    r = requests.put(GH_API, json=payload, headers=headers)
+    return r.ok
+
+def base64_encode(s):
+    import base64
+    return base64.b64encode(s.encode()).decode()
+
+today = datetime.now()
+tabs = st.tabs(["单日查询", "批量查询", "推送设置"])
+
+with tabs[0]:
     d = st.date_input("选择日期", value=today, max_value=today)
     if st.button("查询", type="primary", use_container_width=True):
         ds = d.strftime("%Y-%m-%d")
@@ -120,7 +143,7 @@ with tab1:
                 csv = pd.DataFrame(rows).to_csv(index=False, encoding="utf-8-sig")
                 st.download_button("下载 CSV", csv, f"stock_{ds}.csv")
 
-with tab2:
+with tabs[1]:
     c1, c2 = st.columns(2)
     with c1:
         sd = st.date_input("开始", value=today - timedelta(days=30), max_value=today, key="s")
@@ -163,6 +186,50 @@ with tab2:
                                    f"batch_{sd.strftime('%Y%m%d')}_{ed.strftime('%Y%m%d')}.csv")
             else:
                 st.warning("无数据")
+
+with tabs[2]:
+    st.markdown("### 收盘数据邮件推送设置")
+    st.caption("每个交易日收盘后自动获取数据并发送到指定邮箱")
+
+    token = st.secrets.get("GITHUB_TOKEN", "")
+    if not token:
+        st.warning("未检测到 GITHUB_TOKEN，请在 Streamlit Cloud 的 Secrets 中添加。")
+    else:
+        config = read_config(token)
+        saved_email = config.get("receiver_email", "")
+        saved_freq = config.get("frequency", "每个交易日")
+
+        email = st.text_input("接收邮箱", value=saved_email, placeholder="your@email.com")
+        freq = st.selectbox("推送频率", ["每个交易日", "每周一", "每月首个交易日"],
+                           index=["每个交易日", "每周一", "每月首个交易日"].index(saved_freq) if saved_freq in ["每个交易日", "每周一", "每月首个交易日"] else 0)
+
+        if st.button("保存设置", type="primary"):
+            if not email:
+                st.error("请输入接收邮箱")
+            else:
+                new_config = {"receiver_email": email, "frequency": freq}
+                sha = None
+                try:
+                    r = requests.get(GH_API, headers={"Authorization": f"Bearer {token}"})
+                    if r.status_code == 200:
+                        sha = r.json()["sha"]
+                except:
+                    pass
+
+                if write_config(token, new_config, sha):
+                    st.success(f"保存成功！每个{freq}收盘后将发送到 {email}")
+                else:
+                    st.error("保存失败，请检查 GITHUB_TOKEN 是否有 repo 权限")
+
+        if saved_email:
+            info = f"当前配置：发送到 {saved_email}，频率：{saved_freq}"
+            if saved_freq == "每个交易日":
+                info += "（周一至周五 17:00 左右）"
+            elif saved_freq == "每周一":
+                info += "（每周一收盘后）"
+            else:
+                info += "（每月首个交易日收盘后）"
+            st.info(info)
 
 st.markdown("---")
 st.caption("仅供参考")
