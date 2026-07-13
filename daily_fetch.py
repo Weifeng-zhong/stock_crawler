@@ -108,8 +108,10 @@ def main():
     except Exception:
         pass
 
-    mail_to = config.get("receiver_email")
-    if not mail_to:
+    mail_to_list = config.get("receiver_emails", [])
+    if not mail_to_list and config.get("receiver_email"):
+        mail_to_list = [config["receiver_email"]]
+    if not mail_to_list:
         print("未设置接收邮箱，跳过")
         return
 
@@ -141,9 +143,10 @@ def main():
     print(line)
 
     subject = f"沪深成交数据 {date_str}"
-    body = f"前一交易日成交数据（单位：万亿元）\n\n日期 | 上交所股票 | 上交所基金 | 深交所股票 | 深交所基金\n--- | --- | --- | --- | ---\n{line}\n\n(数据来源：上交所、深交所官网)"
-    send_email(subject, body, mail_to)
-    print("邮件已发送")
+    body = f"前一交易日成交数据（单位：万亿元）\n\n日期 | 上交所股票 | 上交所基金 | 深交所股票 | 深交所基金\n--- | --- | --- | --- | ---\n{line}\n\n如需退订，请访问：https://stockcrawler-qe3y5qgjgyceaazkpajrzd.streamlit.app/\n(数据来源：上交所、深交所官网)"
+    for mail_to in mail_to_list:
+        send_email(subject, body, mail_to)
+        print(f"邮件已发送至 {mail_to}")
 
     config["last_sent_date"] = date_str
     try:
