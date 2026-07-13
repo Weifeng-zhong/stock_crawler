@@ -161,7 +161,7 @@ with tabs[0]:
                         "基金(亿元)": f if f is not None else "-",
                         "基金(万亿元)": f"{f/10000:.2f}" if f is not None else "-",
                     })
-                st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+                st.dataframe(pd.DataFrame(rows), hide_index=True, width='stretch')
                 csv = pd.DataFrame(rows).to_csv(index=False, encoding="utf-8-sig")
                 st.download_button("下载 CSV", csv, f"stock_{ds}.csv")
 
@@ -198,18 +198,21 @@ with tabs[1]:
             if res:
                 df = pd.DataFrame(res)
                 st.markdown("**单位：亿元**")
-                st.dataframe(df, hide_index=True, use_container_width=True)
+                st.dataframe(df, hide_index=True, width='stretch')
                 df2 = df.copy()
                 for c in df2.columns[1:]:
                     df2[c] = df2[c].apply(lambda x: f"{float(x)/10000:.2f}" if x != "-" else "-")
                 st.markdown("**单位：万亿元**")
-                st.dataframe(df2, hide_index=True, use_container_width=True)
+                st.dataframe(df2, hide_index=True, width='stretch')
                 st.download_button("下载 CSV", df.to_csv(index=False, encoding="utf-8-sig"),
                                    f"batch_{sd.strftime('%Y%m%d')}_{ed.strftime('%Y%m%d')}.csv")
             else:
                 st.warning("无数据")
 
 with tabs[2]:
+    if "add_result" not in st.session_state:
+        st.session_state.add_result = None
+
     token = st.secrets.get("GITHUB_TOKEN", "")
     if not token:
         st.warning("未检测到 GITHUB_TOKEN，请在 Streamlit Cloud 的 Secrets 中添加。")
@@ -272,14 +275,18 @@ with tabs[2]:
                             subject = f"沪深成交数据 {ds}（验证邮件）"
                             body = f"订阅验证 - 前一交易日成交数据（单位：万亿元）\n\n日期 | 上交所股票 | 上交所基金 | 深交所股票 | 深交所基金\n--- | --- | --- | --- | ---\n{line}\n\n(数据来源：上交所、深交所官网)"
                             send_email(subject, body, new_email)
-                            st.success(f"已添加 {new_email}，验证邮件已发送")
+                            st.session_state.add_result = f"已添加 {new_email}，验证邮件已发送"
                         else:
-                            st.success(f"已添加 {new_email}（{ds} 无数据，未发送验证邮件）")
+                            st.session_state.add_result = f"已添加 {new_email}（{ds} 无数据，未发送验证邮件）"
                     except Exception as e:
-                        st.success(f"已添加 {new_email}（验证邮件发送失败：{e}）")
+                        st.session_state.add_result = f"已添加 {new_email}（验证邮件发送失败：{e}）"
                 else:
-                    st.success(f"已添加 {new_email}")
+                    st.session_state.add_result = f"已添加 {new_email}"
                 st.rerun()
+
+        if st.session_state.add_result:
+            st.success(st.session_state.add_result)
+            st.session_state.add_result = None
 
         st.markdown("**邮件格式示例：**")
         st.code("前一交易日成交数据（单位：万亿元）\n\n日期 | 上交所股票 | 上交所基金 | 深交所股票 | 深交所基金\n--- | --- | --- | --- | ---\n2026-07-10 | 1.56 | 0.36 | 1.83 | 0.18\n\n如需退订，请访问：https://stockcrawler-qe3y5qgjgyceaazkpajrzd.streamlit.app/\n(数据来源：上交所、深交所官网)")
