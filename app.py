@@ -2,6 +2,8 @@ import streamlit as st
 import requests
 import pandas as pd
 import io
+import random
+import concurrent.futures
 from datetime import datetime, timedelta
 
 st.set_page_config(page_title="沪深成交数据查询", layout="centered")
@@ -54,30 +56,41 @@ def fetch_sse_stock(date_str):
 def fetch_sse_fund(date_str):
     return fetch_sse(date_str, "05")
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=1800)
 def fetch_szse(date_str):
-    try:
-        r = requests.get("http://www.szse.cn/api/report/ShowReport", params={
-            "SHOWTYPE": "xlsx", "CATALOGID": "1803_sczm", "TABKEY": "tab1",
-            "txtQueryDate": date_str, "random": "0.39339437497296137"
-        }, headers=SZSE_HEADERS, timeout=15)
-        df = pd.read_excel(io.BytesIO(r.content), engine="openpyxl")
-        df["证券类别"] = df["证券类别"].str.strip()
-        result = {"stock": None, "fund": None}
-        for _, row in df.iterrows():
-            cat = str(row.iloc[0])
-            raw = str(row.iloc[2]).replace(",", "")
-            try:
-                amt = float(raw) / 1e8
-            except ValueError:
-                continue
-            if cat == "股票":
-                result["stock"] = round(amt, 2)
-            elif cat == "基金":
-                result["fund"] = round(amt, 2)
-        return result["stock"], result["fund"]
-    except Exception:
-        return None, None
+    params = {
+        "SHOWTYPE": "xlsx", "CATALOGID": "1803_sczm", "TABKEY": "tab1",
+        "txtQueryDate": date_str, "random": str(random.random())
+    }
+    for url in ["https://www.szse.cn/api/report/ShowReport", "http://www.szse.cn/api/report/ShowReport"]:
+        try:
+            r = requests.get(url, params=params, headers=SZSE_HEADERS, timeout=15)
+            df = pd.read_excel(io.BytesIO(r.content), engine="openpyxl")
+            df["证券类别"] = df["证券类别"].str.strip()
+            result = {"stock": None, "fund": None}
+            for _, row in df.iterrows():
+                cat = str(row.iloc[0])
+                raw = str(row.iloc[2]).replace(",", "")
+                try:
+                    amt = float(raw) / 1e8
+                except ValueError:
+                    continue
+                if cat == "股票":
+                    result["stock"] = round(amt, 2)
+                elif cat == "基金":
+                    result["fund"] = round(amt, 2)
+            return result["stock"], result["fund"]
+        except Exception:
+            continue
+    return None, None
+
+def fetch_all(date_str):
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
+        sf = ex.submit(fetch_sse_stock, date_str)
+        ff = ex.submit(fetch_sse_fund, date_str)
+        zf = ex.submit(fetch_szse, date_str)
+        sz_stock, sz_fund = zf.result()
+        return sf.result(), ff.result(), sz_stock, sz_fund
 
 today = datetime.now()
 tab1, tab2 = st.tabs(["单日查询", "批量查询"])
@@ -90,9 +103,7 @@ with tab1:
             st.warning(f"{ds} 为非交易日（周末或法定节假日），当日无成交数据。")
         else:
             with st.spinner(f"获取 {ds} 数据..."):
-                ss = fetch_sse_stock(ds)
-                sf = fetch_sse_fund(ds)
-                zs, zf = fetch_szse(ds)
+                ss, sf, zs, zf = fetch_all(ds)
             if ss is None and sf is None and zs is None and zf is None:
                 st.warning(f"{ds} 无数据")
             else:
@@ -101,9 +112,9 @@ with tab1:
                     rows.append({
                         "交易所": name,
                         "股票(亿元)": s if s is not None else "-",
-"股票(万亿元)": f"{s/10000:.2f}" if s is not None else "-",
-                    "基金(亿元)": f if f is not None else "-",
-                    "基金(万亿元)": f"{f/10000:.2f}" if f is not None else "-",
+                        "股票(万亿元)": f"{s/10000:.2f}" if s is not None else "-",
+                        "基金(亿元)": f if f is not None else "-",
+                        "基金(万亿元)": f"{f/10000:.2f}" if f is not None else "-",
                     })
                 st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
                 csv = pd.DataFrame(rows).to_csv(index=False, encoding="utf-8-sig")
@@ -121,22 +132,24 @@ with tab2:
         else:
             dates = pd.bdate_range(start=sd, end=ed)
             res = []
-            p = st.progress(0)
-            sts = st.empty()
-            for i, dt in enumerate(dates):
-                ds = dt.strftime("%Y-%m-%d")
-                sts.text(f"查询 {ds}...")
-                s1 = fetch_sse_stock(ds)
-                s2 = fetch_sse_fund(ds)
-                s3, s4 = fetch_szse(ds)
-                if any(x is not None for x in [s1, s2, s3, s4]):
-                    res.append({"日期": ds, "上交所股票(亿元)": s1 if s1 is not None else "-",
-                                "上交所基金(亿元)": s2 if s2 is not None else "-",
-                                "深交所股票(亿元)": s3 if s3 is not None else "-",
-                                "深交所基金(亿元)": s4 if s4 is not None else "-"})
-                p.progress((i + 1) / len(dates))
-            sts.empty()
-            p.empty()
+            with st.spinner(f"正在并行获取 {len(dates)} 个交易日数据..."):
+                with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
+                    fut = {ex.submit(fetch_all, dt.strftime("%Y-%m-%d")): dt for dt in dates}
+                    p = st.progress(0)
+                    done = 0
+                    for f in concurrent.futures.as_completed(fut):
+                        dt = fut[f]
+                        ds = dt.strftime("%Y-%m-%d")
+                        ss, sf, zs, zf = f.result()
+                        if any(x is not None for x in [ss, sf, zs, zf]):
+                            res.append({"日期": ds, "上交所股票(亿元)": ss if ss is not None else "-",
+                                        "上交所基金(亿元)": sf if sf is not None else "-",
+                                        "深交所股票(亿元)": zs if zs is not None else "-",
+                                        "深交所基金(亿元)": zf if zf is not None else "-"})
+                        done += 1
+                        p.progress(done / len(dates))
+                    p.empty()
+            res.sort(key=lambda x: x["日期"])
             if res:
                 df = pd.DataFrame(res)
                 st.markdown("**单位：亿元**")
