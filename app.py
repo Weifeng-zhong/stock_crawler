@@ -109,8 +109,9 @@ def read_config(token):
     r = requests.get(GH_API, headers={"Authorization": f"Bearer {token}"})
     if r.status_code == 404:
         return {}
-    content = json.loads(r.json()["content"])
-    return content
+    import base64
+    decoded = base64.b64decode(r.json()["content"]).decode()
+    return json.loads(decoded)
 
 def write_config(token, config, sha=None):
     headers = {"Authorization": f"Bearer {token}"}
