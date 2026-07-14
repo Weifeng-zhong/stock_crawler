@@ -5,6 +5,7 @@ import sys
 import random
 import json
 import argparse
+import traceback
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timezone, timedelta
@@ -126,51 +127,57 @@ def fetch_send(date_str, mail_to_list):
     return True
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--verify-email", help="发送验证邮件到指定邮箱")
-    args = parser.parse_args()
-
-    if args.verify_email:
-        now = datetime.now(BJ_TZ)
-        latest = prev_trading_day(now)
-        date_str = latest.strftime("%Y-%m-%d")
-        ok = fetch_send(date_str, [args.verify_email])
-        sys.exit(0 if ok else 1)
-
-    config = {"receiver_email": ""}
     try:
-        with open("config.json") as f:
-            config.update(json.load(f))
-    except Exception:
-        pass
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--verify-email", help="发送验证邮件到指定邮箱")
+        args = parser.parse_args()
 
-    mail_to_list = config.get("receiver_emails", [])
-    if not mail_to_list and config.get("receiver_email"):
-        mail_to_list = [config["receiver_email"]]
-    if not mail_to_list:
-        print("未设置接收邮箱，跳过")
-        return
+        if args.verify_email:
+            now = datetime.now(BJ_TZ)
+            latest = prev_trading_day(now)
+            date_str = latest.strftime("%Y-%m-%d")
+            ok = fetch_send(date_str, [args.verify_email])
+            sys.exit(0 if ok else 1)
 
-    now = datetime.now(BJ_TZ)
-    yesterday = now - timedelta(days=1)
-    if not is_trading_day(yesterday):
-        print(f"{yesterday.date()} 非交易日，跳过")
-        return
-    date_str = yesterday.strftime("%Y-%m-%d")
-
-    last_sent = config.get("last_sent_date", "")
-    if date_str == last_sent:
-        print(f"{date_str} 已发送过，跳过")
-        return
-
-    ok = fetch_send(date_str, mail_to_list)
-    if ok:
-        config["last_sent_date"] = date_str
+        config = {"receiver_email": ""}
         try:
-            with open("config.json", "w", encoding="utf-8") as f:
-                json.dump(config, f, ensure_ascii=False, indent=2)
+            with open("config.json") as f:
+                config.update(json.load(f))
         except Exception:
             pass
+
+        mail_to_list = config.get("receiver_emails", [])
+        if not mail_to_list and config.get("receiver_email"):
+            mail_to_list = [config["receiver_email"]]
+        if not mail_to_list:
+            print("未设置接收邮箱，跳过")
+            return
+
+        now = datetime.now(BJ_TZ)
+        yesterday = now - timedelta(days=1)
+        if not is_trading_day(yesterday):
+            print(f"{yesterday.date()} 非交易日，跳过")
+            return
+        date_str = yesterday.strftime("%Y-%m-%d")
+
+        last_sent = config.get("last_sent_date", "")
+        if date_str == last_sent:
+            print(f"{date_str} 已发送过，跳过")
+            return
+
+        ok = fetch_send(date_str, mail_to_list)
+        if ok:
+            config["last_sent_date"] = date_str
+            try:
+                with open("config.json", "w", encoding="utf-8") as f:
+                    json.dump(config, f, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
+    except SystemExit:
+        raise
+    except Exception:
+        traceback.print_exc()
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
