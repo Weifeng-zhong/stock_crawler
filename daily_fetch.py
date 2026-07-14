@@ -1,8 +1,10 @@
 import smtplib
 import requests
 import os
+import sys
 import random
 import json
+import argparse
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timezone, timedelta
@@ -100,7 +102,41 @@ def send_email(subject, body, mail_to):
         s.login(mail_user, mail_pass)
         s.send_message(msg)
 
+def fetch_send(date_str, mail_to_list):
+    print(f"获取 {date_str} 数据...")
+    ss = fetch_sse_stock(date_str)
+    sf = fetch_sse_fund(date_str)
+    zs, zf = fetch_szse(date_str)
+
+    if ss is None and sf is None and zs is None and zf is None:
+        print(f"{date_str} 无可用数据")
+        return False
+
+    def v(x):
+        return f"{x/10000:.2f}" if x is not None else "-"
+
+    line = f"{date_str} | {v(ss)} | {v(sf)} | {v(zs)} | {v(zf)}"
+    print(line)
+
+    subject = f"沪深成交数据 {date_str}"
+    body = f"前一交易日成交数据（单位：万亿元）\n\n日期 | 上交所股票 | 上交所基金 | 深交所股票 | 深交所基金\n--- | --- | --- | --- | ---\n{line}\n\n如需退订，请访问：https://stockcrawler-qe3y5qgjgyceaazkpajrzd.streamlit.app/\n(数据来源：上交所、深交所官网)"
+    for mail_to in mail_to_list:
+        send_email(subject, body, mail_to)
+        print(f"邮件已发送至 {mail_to}")
+    return True
+
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--verify-email", help="发送验证邮件到指定邮箱")
+    args = parser.parse_args()
+
+    if args.verify_email:
+        now = datetime.now(BJ_TZ)
+        latest = prev_trading_day(now)
+        date_str = latest.strftime("%Y-%m-%d")
+        ok = fetch_send(date_str, [args.verify_email])
+        sys.exit(0 if ok else 1)
+
     config = {"receiver_email": ""}
     try:
         with open("config.json") as f:
@@ -127,33 +163,14 @@ def main():
         print(f"{date_str} 已发送过，跳过")
         return
 
-    print(f"获取 {date_str} 数据...")
-    ss = fetch_sse_stock(date_str)
-    sf = fetch_sse_fund(date_str)
-    zs, zf = fetch_szse(date_str)
-
-    if ss is None and sf is None and zs is None and zf is None:
-        print(f"{date_str} 无可用数据")
-        return
-
-    def v(x):
-        return f"{x/10000:.2f}" if x is not None else "-"
-
-    line = f"{date_str} | {v(ss)} | {v(sf)} | {v(zs)} | {v(zf)}"
-    print(line)
-
-    subject = f"沪深成交数据 {date_str}"
-    body = f"前一交易日成交数据（单位：万亿元）\n\n日期 | 上交所股票 | 上交所基金 | 深交所股票 | 深交所基金\n--- | --- | --- | --- | ---\n{line}\n\n如需退订，请访问：https://stockcrawler-qe3y5qgjgyceaazkpajrzd.streamlit.app/\n(数据来源：上交所、深交所官网)"
-    for mail_to in mail_to_list:
-        send_email(subject, body, mail_to)
-        print(f"邮件已发送至 {mail_to}")
-
-    config["last_sent_date"] = date_str
-    try:
-        with open("config.json", "w", encoding="utf-8") as f:
-            json.dump(config, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+    ok = fetch_send(date_str, mail_to_list)
+    if ok:
+        config["last_sent_date"] = date_str
+        try:
+            with open("config.json", "w", encoding="utf-8") as f:
+                json.dump(config, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
 
 if __name__ == "__main__":
     main()

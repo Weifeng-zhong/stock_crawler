@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '0 1 * * *'
   workflow_dispatch:
+    inputs:
+      verify_email:
+        description: '验证邮箱地址'
+        required: false
+        type: string
 
 jobs:
   fetch-and-send:
@@ -16,11 +21,15 @@ jobs:
           python-version: '3.12'
 
       - name: 安装依赖
-        run: |
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt
 
       - name: 获取数据并发送邮件
         env:
           MAIL_USER: ${{ secrets.MAIL_USER }}
           MAIL_PASS: ${{ secrets.MAIL_PASS }}
-        run: python daily_fetch.py
+        run: |
+          if [ -n "${{ inputs.verify_email }}" ]; then
+            python daily_fetch.py --verify-email "${{ inputs.verify_email }}"
+          else
+            python daily_fetch.py
+          fi
