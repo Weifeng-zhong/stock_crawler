@@ -103,11 +103,11 @@ def send_email(subject, body, mail_to):
     for port in [465, 587]:
         try:
             if port == 465:
-                with smtplib.SMTP_SSL("smtp.163.com", port, timeout=15) as s:
+                with smtplib.SMTP_SSL("smtp.qq.com", port, timeout=15) as s:
                     s.login(mail_user, mail_pass)
                     s.send_message(msg)
             else:
-                with smtplib.SMTP("smtp.163.com", port, timeout=15) as s:
+                with smtplib.SMTP("smtp.qq.com", port, timeout=15) as s:
                     s.starttls()
                     s.login(mail_user, mail_pass)
                     s.send_message(msg)
