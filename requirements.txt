@@ -2,3 +2,4 @@ streamlit<2
 requests
 pandas<3.0
 openpyxl<3.2
+chinese_calendar

@@ -9,6 +9,7 @@ import traceback
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timezone, timedelta
+from chinese_calendar import is_workday
 
 BJ_TZ = timezone(timedelta(hours=8))
 
@@ -21,21 +22,8 @@ SZSE_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 }
 
-HOLIDAYS = {
-    (2026, 1, 1), (2026, 1, 2), (2026, 1, 3),
-    (2026, 1, 26), (2026, 1, 27), (2026, 1, 28), (2026, 1, 29), (2026, 1, 30),
-    (2026, 2, 2), (2026, 2, 3), (2026, 2, 4), (2026, 2, 5), (2026, 2, 6),
-    (2026, 4, 6), (2026, 4, 7),
-    (2026, 5, 1), (2026, 5, 2), (2026, 5, 3),
-    (2026, 5, 28), (2026, 5, 29),
-    (2026, 10, 1), (2026, 10, 2), (2026, 10, 3), (2026, 10, 4), (2026, 10, 5),
-    (2026, 10, 6), (2026, 10, 7), (2026, 10, 8), (2026, 10, 9),
-}
-
 def is_trading_day(dt):
-    if dt.weekday() >= 5:
-        return False
-    return (dt.year, dt.month, dt.day) not in HOLIDAYS
+    return is_workday(dt)
 
 def prev_trading_day(dt):
     d = dt - timedelta(days=1)

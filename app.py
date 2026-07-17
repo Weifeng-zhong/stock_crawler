@@ -6,6 +6,7 @@ import random
 import json
 import concurrent.futures
 from datetime import datetime, timedelta, date
+from chinese_calendar import is_workday as _is_workday
 
 st.set_page_config(page_title="沪深成交数据查询", layout="centered")
 st.title("沪深交易所日成交数据")
@@ -24,20 +25,7 @@ SZSE_HEADERS = {
 }
 
 def is_trading_day(dt):
-    if dt.weekday() >= 5:
-        return False
-    y, m, d = dt.year, dt.month, dt.day
-    holidays = {
-        (2026, 1, 1), (2026, 1, 2), (2026, 1, 3),
-        (2026, 1, 26), (2026, 1, 27), (2026, 1, 28), (2026, 1, 29), (2026, 1, 30),
-        (2026, 2, 2), (2026, 2, 3), (2026, 2, 4), (2026, 2, 5), (2026, 2, 6),
-        (2026, 4, 6), (2026, 4, 7),
-        (2026, 5, 1), (2026, 5, 2), (2026, 5, 3),
-        (2026, 5, 28), (2026, 5, 29),
-        (2026, 10, 1), (2026, 10, 2), (2026, 10, 3), (2026, 10, 4), (2026, 10, 5),
-        (2026, 10, 6), (2026, 10, 7), (2026, 10, 8), (2026, 10, 9),
-    }
-    return (y, m, d) not in holidays
+    return _is_workday(dt)
 
 def fetch_sse(date_str, code):
     try:
