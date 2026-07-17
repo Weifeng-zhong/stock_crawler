@@ -94,14 +94,31 @@ def fetch_szse(date_str):
 def send_email(subject, body, mail_to):
     mail_user = os.environ["MAIL_USER"]
     mail_pass = os.environ["MAIL_PASS"]
+    print(f"mail_user={mail_user}, mail_pass_len={len(mail_pass)}")
     msg = MIMEMultipart()
     msg["From"] = mail_user
     msg["To"] = mail_to
     msg["Subject"] = subject
     msg.attach(MIMEText(body, "plain", "utf-8"))
-    with smtplib.SMTP_SSL("smtp.163.com", 465, timeout=30) as s:
-        s.login(mail_user, mail_pass)
-        s.send_message(msg)
+    for port in [465, 587]:
+        try:
+            if port == 465:
+                with smtplib.SMTP_SSL("smtp.163.com", port, timeout=15) as s:
+                    s.login(mail_user, mail_pass)
+                    s.send_message(msg)
+            else:
+                with smtplib.SMTP("smtp.163.com", port, timeout=15) as s:
+                    s.starttls()
+                    s.login(mail_user, mail_pass)
+                    s.send_message(msg)
+            print(f"smtp.163.com:{port} 发送成功")
+            return
+        except smtplib.SMTPAuthenticationError:
+            print(f"smtp.163.com:{port} 认证失败")
+            raise
+        except Exception as e:
+            print(f"smtp.163.com:{port} 失败: {e}")
+    raise smtplib.SMTPAuthenticationError(550, b'User has no permission')
 
 def fetch_send(date_str, mail_to_list):
     print(f"获取 {date_str} 数据...")
