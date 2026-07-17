@@ -113,11 +113,9 @@ def send_email(subject, body, mail_to):
                     s.send_message(msg)
             print(f"smtp.163.com:{port} 发送成功")
             return
-        except smtplib.SMTPAuthenticationError:
-            print(f"smtp.163.com:{port} 认证失败")
-            raise
         except Exception as e:
             print(f"smtp.163.com:{port} 失败: {e}")
+    raise smtplib.SMTPAuthenticationError(550, b'All ports failed')
     raise smtplib.SMTPAuthenticationError(550, b'User has no permission')
 
 def fetch_send(date_str, mail_to_list):
