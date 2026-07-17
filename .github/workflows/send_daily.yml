@@ -10,6 +10,9 @@ on:
         required: false
         type: string
 
+permissions:
+  contents: write
+
 env:
   VERIFY_EMAIL: ${{ github.event.inputs.verify_email || '' }}
 
@@ -36,3 +39,12 @@ jobs:
           else
             python daily_fetch.py
           fi
+
+      - name: 提交 last_sent_date 到仓库
+        if: ${{ env.VERIFY_EMAIL == '' }}
+        run: |
+          git config user.name "stock-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add config.json
+          git diff --quiet && git diff --staged --quiet || git commit -m "update last_sent_date"
+          git push
