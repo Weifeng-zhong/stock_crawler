@@ -1,6 +1,8 @@
 {
+  "receiver_email": "",
   "receiver_emails": [
     "13712967619@163.com",
     "liyizhang.wind@163.com"
-  ]
+  ],
+  "last_sent_date": "2026-07-17"
 }
