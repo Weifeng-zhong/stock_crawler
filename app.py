@@ -92,8 +92,8 @@ def fetch_szse(date_str):
                 elif cat == "基金":
                     result["fund"] = round(amt, 2)
             return result["stock"], result["fund"]
-        except Exception:
-            continue
+        except Exception as e:
+            print(f"SZSE {url} 请求/解析失败: {e}")
     return None, None
 
 def fetch_all(date_str):
