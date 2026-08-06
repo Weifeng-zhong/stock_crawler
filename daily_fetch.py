@@ -1,8 +1,6 @@
 import smtplib
-import requests
 import os
 import sys
-import random
 import json
 import argparse
 import traceback
@@ -11,19 +9,14 @@ from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timezone, timedelta
 from chinese_calendar import is_workday
 
+from stock_api import fetch_sse, fetch_sse_stock, fetch_sse_fund, fetch_szse
+
 BJ_TZ = timezone(timedelta(hours=8))
 
-SSE_HEADERS = {
-    "Referer": "https://www.sse.com.cn/",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-}
-SZSE_HEADERS = {
-    "Referer": "https://www.szse.cn/market/overview/index.html",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-}
 
 def is_trading_day(dt):
     return is_workday(dt)
+
 
 def prev_trading_day(dt):
     d = dt - timedelta(days=1)
@@ -31,83 +24,16 @@ def prev_trading_day(dt):
         d -= timedelta(days=1)
     return d
 
-TENCENT_SYMBOL = {"17": "sh000001", "05": "sh000011"}
-
-def fetch_sse(date_str, code):
-    try:
-        r = requests.get("https://query.sse.com.cn/commonQuery.do", params={
-            "sqlId": "COMMON_SSE_SJ_GPSJ_CJGK_MRGK_C", "PRODUCT_CODE": code,
-            "type": "inParams", "SEARCH_DATE": date_str
-        }, headers=SSE_HEADERS, timeout=15)
-        d = r.json()
-        if d.get("result"):
-            return float(d["result"][0]["TRADE_AMT"])
-        print(f"SSE 官方接口无数据: {d.get('error') or d.get('success')}")
-    except Exception as e:
-        print(f"SSE 官方接口异常: {e}")
-    return fetch_sse_fallback(date_str, code)
-
-def fetch_sse_fallback(date_str, code):
-    symbol = TENCENT_SYMBOL.get(code)
-    if not symbol:
-        return None
-    try:
-        r = requests.get("https://web.ifzq.gtimg.cn/appstock/app/newfqkline/get",
-                         params={"param": f"{symbol},day,{date_str},{date_str},10,qfq"},
-                         headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
-                         timeout=15)
-        for row in r.json()["data"][symbol]["day"]:
-            if row[0] == date_str:
-                print(f"SSE 使用腾讯兜底数据: {symbol} {date_str}")
-                return round(float(row[8]) / 10000, 2)
-    except Exception as e:
-        print(f"SSE 腾讯兜底接口异常: {e}")
-    return None
-
-def fetch_sse_stock(date_str):
-    return fetch_sse(date_str, "17")
-
-def fetch_sse_fund(date_str):
-    return fetch_sse(date_str, "05")
-
-def fetch_szse(date_str):
-    import pandas as pd
-    import io
-    params = {
-        "SHOWTYPE": "xlsx", "CATALOGID": "1803_sczm", "TABKEY": "tab1",
-        "txtQueryDate": date_str, "random": str(random.random())
-    }
-    for url in ["https://www.szse.cn/api/report/ShowReport", "http://www.szse.cn/api/report/ShowReport"]:
-        try:
-            r = requests.get(url, params=params, headers=SZSE_HEADERS, timeout=15)
-            df = pd.read_excel(io.BytesIO(r.content), engine="openpyxl")
-            df["证券类别"] = df["证券类别"].str.strip()
-            result = {"stock": None, "fund": None}
-            for _, row in df.iterrows():
-                cat = str(row.iloc[0])
-                raw = str(row.iloc[2]).replace(",", "")
-                try:
-                    amt = float(raw) / 1e8
-                except ValueError:
-                    continue
-                if cat == "股票":
-                    result["stock"] = round(amt, 2)
-                elif cat == "基金":
-                    result["fund"] = round(amt, 2)
-            return result["stock"], result["fund"]
-        except Exception as e:
-            print(f"SZSE {url} 请求/解析失败: {e}")
-    return None, None
 
 def send_email(subject, body, mail_to):
     mail_user = os.environ["MAIL_USER"]
     mail_pass = os.environ["MAIL_PASS"]
-    print(f"mail_user={mail_user}, mail_pass_len={len(mail_pass)}")
     msg = MIMEMultipart()
     msg["From"] = mail_user
     msg["To"] = mail_to
     msg["Subject"] = subject
     msg.attach(MIMEText(body, "plain", "utf-8"))
+    last_err = None
     for port in [465, 587]:
         try:
             if port == 465:
@@ -120,10 +46,12 @@ def send_email(subject, body, mail_to):
                     s.login(mail_user, mail_pass)
                     s.send_message(msg)
             print(f"smtp.qq.com:{port} 发送成功")
-            return
+            return True
         except Exception as e:
+            last_err = e
             print(f"smtp.qq.com:{port} 失败: {e}")
-    raise smtplib.SMTPAuthenticationError(550, b'All ports failed')
+    raise smtplib.SMTPAuthenticationError(550, f"All ports failed: {last_err}".encode())
+
 
 def fetch_send(date_str, mail_to_list):
     print(f"获取 {date_str} 数据...")
@@ -131,22 +59,37 @@ def fetch_send(date_str, mail_to_list):
     sf = fetch_sse_fund(date_str)
     zs, zf = fetch_szse(date_str)
 
-    if ss is None and sf is None and zs is None and zf is None:
-        print(f"{date_str} 无可用数据")
+    values = {"上交所股票": ss, "上交所基金": sf, "深交所股票": zs, "深交所基金": zf}
+    failed = [k for k, v in values.items() if v is None]
+
+    if len(failed) == 4:
+        print(f"{date_str} 全部数据获取失败，本次不发送邮件")
         return False
 
     def v(x):
-        return f"{x/10000:.2f}" if x is not None else "-"
+        return f"{x / 10000:.2f}" if x is not None else "获取失败"
 
     line = f"{date_str} | {v(ss)} | {v(sf)} | {v(zs)} | {v(zf)}"
     print(line)
+    if failed:
+        print(f"警告: {date_str} 以下数据获取失败(已标注): {', '.join(failed)}")
 
     subject = f"沪深成交数据 {date_str}"
     body = f"前一交易日成交数据（单位：万亿元）\n\n日期 | 上交所股票 | 上交所基金 | 深交所股票 | 深交所基金\n--- | --- | --- | --- | ---\n{line}\n\n如需退订，请访问：https://stockcrawler-qe3y5qgjgyceaazkpajrzd.streamlit.app/\n(数据来源：上交所、深交所官网)"
+
+    ok_count = 0
     for mail_to in mail_to_list:
-        send_email(subject, body, mail_to)
-        print(f"邮件已发送至 {mail_to}")
+        try:
+            send_email(subject, body, mail_to)
+            ok_count += 1
+            print(f"邮件已发送至 {mail_to}")
+        except Exception as e:
+            print(f"发送至 {mail_to} 失败: {e}")
+    if ok_count < len(mail_to_list):
+        print(f"部分收件人发送失败: {ok_count}/{len(mail_to_list)} 成功")
+        return False
     return True
+
 
 def main():
     try:
@@ -188,18 +131,20 @@ def main():
             return
 
         ok = fetch_send(date_str, mail_to_list)
-        if ok:
-            config["last_sent_date"] = date_str
-            try:
-                with open("config.json", "w", encoding="utf-8") as f:
-                    json.dump(config, f, ensure_ascii=False, indent=2)
-            except Exception:
-                pass
+        if not ok:
+            sys.exit(1)
+        config["last_sent_date"] = date_str
+        try:
+            with open("config.json", "w", encoding="utf-8") as f:
+                json.dump(config, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
     except SystemExit:
         raise
     except Exception:
         traceback.print_exc()
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
