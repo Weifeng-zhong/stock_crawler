@@ -27,6 +27,8 @@ SZSE_HEADERS = {
 def is_trading_day(dt):
     return _is_workday(dt)
 
+TENCENT_SYMBOL = {"17": "sh000001", "05": "sh000011"}
+
 def fetch_sse(date_str, code):
     try:
         r = requests.get("https://query.sse.com.cn/commonQuery.do", params={
@@ -36,8 +38,26 @@ def fetch_sse(date_str, code):
         d = r.json()
         if d.get("result"):
             return float(d["result"][0]["TRADE_AMT"])
-    except Exception:
-        pass
+        print(f"SSE 官方接口无数据: {d.get('error') or d.get('success')}")
+    except Exception as e:
+        print(f"SSE 官方接口异常: {e}")
+    return fetch_sse_fallback(date_str, code)
+
+def fetch_sse_fallback(date_str, code):
+    symbol = TENCENT_SYMBOL.get(code)
+    if not symbol:
+        return None
+    try:
+        r = requests.get("https://web.ifzq.gtimg.cn/appstock/app/newfqkline/get",
+                         params={"param": f"{symbol},day,{date_str},{date_str},10,qfq"},
+                         headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+                         timeout=15)
+        for row in r.json()["data"][symbol]["day"]:
+            if row[0] == date_str:
+                print(f"SSE 使用腾讯兜底数据: {symbol} {date_str}")
+                return round(float(row[8]) / 10000, 2)
+    except Exception as e:
+        print(f"SSE 腾讯兜底接口异常: {e}")
     return None
 
 @st.cache_data(ttl=3600)
