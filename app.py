@@ -207,7 +207,10 @@ with tabs[2]:
     if "add_result" not in st.session_state:
         st.session_state.add_result = None
 
-    token = st.secrets.get("GITHUB_TOKEN", "")
+    try:
+        token = st.secrets.get("GITHUB_TOKEN", "")
+    except Exception:
+        token = ""
     if not token:
         st.warning("未检测到 GITHUB_TOKEN，请在 Streamlit Cloud 的 Secrets 中添加。")
     else:
