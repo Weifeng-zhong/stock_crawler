@@ -4,9 +4,11 @@ import pandas as pd
 import io
 import random
 import json
+import re
 import concurrent.futures
 from datetime import datetime, timedelta, date
-from chinese_calendar import is_workday as _is_workday
+
+from stock_api import fetch_sse as _fetch_sse, fetch_szse as _fetch_szse, is_trading_day
 
 st.set_page_config(page_title="沪深成交数据查询", layout="centered")
 st.title("沪深交易所日成交数据")
@@ -15,86 +17,23 @@ st.caption("数据来源：上海证券交易所 & 深圳证券交易所")
 GH_REPO = "Weifeng-zhong/stock_crawler"
 GH_API = f"https://api.github.com/repos/{GH_REPO}/contents/config.json"
 
-SSE_HEADERS = {
-    "Referer": "https://www.sse.com.cn/",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-}
-SZSE_HEADERS = {
-    "Referer": "https://www.szse.cn/market/overview/index.html",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-}
+EMAIL_RE = re.compile(r"^[\w.+-]+@[\w-]+(\.[\w-]+)+$")
 
-def is_trading_day(dt):
-    return _is_workday(dt)
-
-TENCENT_SYMBOL = {"17": "sh000001", "05": "sh000011"}
-
-def fetch_sse(date_str, code):
-    try:
-        r = requests.get("https://query.sse.com.cn/commonQuery.do", params={
-            "sqlId": "COMMON_SSE_SJ_GPSJ_CJGK_MRGK_C", "PRODUCT_CODE": code,
-            "type": "inParams", "SEARCH_DATE": date_str
-        }, headers=SSE_HEADERS, timeout=15)
-        d = r.json()
-        if d.get("result"):
-            return float(d["result"][0]["TRADE_AMT"])
-        print(f"SSE 官方接口无数据: {d.get('error') or d.get('success')}")
-    except Exception as e:
-        print(f"SSE 官方接口异常: {e}")
-    return fetch_sse_fallback(date_str, code)
-
-def fetch_sse_fallback(date_str, code):
-    symbol = TENCENT_SYMBOL.get(code)
-    if not symbol:
-        return None
-    try:
-        r = requests.get("https://web.ifzq.gtimg.cn/appstock/app/newfqkline/get",
-                         params={"param": f"{symbol},day,{date_str},{date_str},10,qfq"},
-                         headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
-                         timeout=15)
-        for row in r.json()["data"][symbol]["day"]:
-            if row[0] == date_str:
-                print(f"SSE 使用腾讯兜底数据: {symbol} {date_str}")
-                return round(float(row[8]) / 10000, 2)
-    except Exception as e:
-        print(f"SSE 腾讯兜底接口异常: {e}")
-    return None
 
 @st.cache_data(ttl=3600)
 def fetch_sse_stock(date_str):
-    return fetch_sse(date_str, "17")
+    return _fetch_sse(date_str, "17")
+
 
 @st.cache_data(ttl=3600)
 def fetch_sse_fund(date_str):
-    return fetch_sse(date_str, "05")
+    return _fetch_sse(date_str, "05")
+
 
 @st.cache_data(ttl=1800)
 def fetch_szse(date_str):
-    params = {
-        "SHOWTYPE": "xlsx", "CATALOGID": "1803_sczm", "TABKEY": "tab1",
-        "txtQueryDate": date_str, "random": str(random.random())
-    }
-    for url in ["https://www.szse.cn/api/report/ShowReport", "http://www.szse.cn/api/report/ShowReport"]:
-        try:
-            r = requests.get(url, params=params, headers=SZSE_HEADERS, timeout=15)
-            df = pd.read_excel(io.BytesIO(r.content), engine="openpyxl")
-            df["证券类别"] = df["证券类别"].str.strip()
-            result = {"stock": None, "fund": None}
-            for _, row in df.iterrows():
-                cat = str(row.iloc[0])
-                raw = str(row.iloc[2]).replace(",", "")
-                try:
-                    amt = float(raw) / 1e8
-                except ValueError:
-                    continue
-                if cat == "股票":
-                    result["stock"] = round(amt, 2)
-                elif cat == "基金":
-                    result["fund"] = round(amt, 2)
-            return result["stock"], result["fund"]
-        except Exception as e:
-            print(f"SZSE {url} 请求/解析失败: {e}")
-    return None, None
+    return _fetch_szse(date_str)
+
 
 def fetch_all(date_str):
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
@@ -104,6 +43,7 @@ def fetch_all(date_str):
         sz_stock, sz_fund = zf.result()
         return sf.result(), ff.result(), sz_stock, sz_fund
 
+
 def read_config(token):
     r = requests.get(GH_API, headers={"Authorization": f"Bearer {token}"})
     if r.status_code == 404:
@@ -111,6 +51,7 @@ def read_config(token):
     import base64
     decoded = base64.b64decode(r.json()["content"]).decode()
     return json.loads(decoded)
+
 
 def write_config(token, config, sha=None):
     headers = {"Authorization": f"Bearer {token}"}
@@ -120,16 +61,20 @@ def write_config(token, config, sha=None):
     r = requests.put(GH_API, json=payload, headers=headers)
     return r.ok
 
+
 def base64_encode(s):
     import base64
     return base64.b64encode(s.encode()).decode()
 
+
 WORKFLOW_API = f"https://api.github.com/repos/{GH_REPO}/actions/workflows/send_daily.yml/dispatches"
+
 
 def trigger_verify_workflow(email, token):
     r = requests.post(WORKFLOW_API, json={"ref": "master", "inputs": {"verify_email": email}},
                       headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github.v3+json"})
     return r.status_code == 204
+
 
 today = datetime.now()
 tabs = st.tabs(["单日查询", "批量查询", "推送设置"])
@@ -169,7 +114,7 @@ with tabs[1]:
         if sd > ed:
             st.error("开始 > 结束")
         else:
-            dates = pd.bdate_range(start=sd, end=ed)
+            dates = [x for x in pd.bdate_range(start=sd, end=ed) if is_trading_day(x)]
             res = []
             with st.spinner(f"正在并行获取 {len(dates)} 个交易日数据..."):
                 with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
@@ -249,6 +194,8 @@ with tabs[2]:
         if st.button("添加", type="primary"):
             if not new_email:
                 st.error("请输入邮箱")
+            elif not EMAIL_RE.match(new_email):
+                st.error("邮箱格式不正确，请检查后重试")
             elif new_email in saved_emails:
                 st.warning("该邮箱已订阅")
             else:
