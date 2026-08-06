@@ -95,8 +95,8 @@ def fetch_szse(date_str):
                 elif cat == "基金":
                     result["fund"] = round(amt, 2)
             return result["stock"], result["fund"]
-        except Exception:
-            continue
+        except Exception as e:
+            print(f"SZSE {url} 请求/解析失败: {e}")
     return None, None
 
 def send_email(subject, body, mail_to):
@@ -119,12 +119,11 @@ def send_email(subject, body, mail_to):
                     s.starttls()
                     s.login(mail_user, mail_pass)
                     s.send_message(msg)
-            print(f"smtp.163.com:{port} 发送成功")
+            print(f"smtp.qq.com:{port} 发送成功")
             return
         except Exception as e:
-            print(f"smtp.163.com:{port} 失败: {e}")
+            print(f"smtp.qq.com:{port} 失败: {e}")
     raise smtplib.SMTPAuthenticationError(550, b'All ports failed')
-    raise smtplib.SMTPAuthenticationError(550, b'User has no permission')
 
 def fetch_send(date_str, mail_to_list):
     print(f"获取 {date_str} 数据...")
