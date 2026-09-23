@@ -1,14 +1,14 @@
 import streamlit as st
 import requests
 import pandas as pd
-import io
-import random
 import json
 import re
 import concurrent.futures
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, timezone
 
 from stock_api import fetch_sse as _fetch_sse, fetch_szse as _fetch_szse, is_trading_day
+
+BJ_TZ = timezone(timedelta(hours=8))
 
 st.set_page_config(page_title="沪深成交数据查询", layout="centered")
 st.title("沪深交易所日成交数据")
@@ -45,9 +45,10 @@ def fetch_all(date_str):
 
 
 def read_config(token):
-    r = requests.get(GH_API, headers={"Authorization": f"Bearer {token}"})
+    r = requests.get(GH_API, headers={"Authorization": f"Bearer {token}"}, timeout=15)
     if r.status_code == 404:
         return {}
+    r.raise_for_status()
     import base64
     decoded = base64.b64decode(r.json()["content"]).decode()
     return json.loads(decoded)
@@ -58,7 +59,7 @@ def write_config(token, config, sha=None):
     payload = {"message": "Update push config", "content": base64_encode(json.dumps(config, ensure_ascii=False, indent=2))}
     if sha:
         payload["sha"] = sha
-    r = requests.put(GH_API, json=payload, headers=headers)
+    r = requests.put(GH_API, json=payload, headers=headers, timeout=15)
     return r.ok
 
 
@@ -72,11 +73,11 @@ WORKFLOW_API = f"https://api.github.com/repos/{GH_REPO}/actions/workflows/send_d
 
 def trigger_verify_workflow(email, token):
     r = requests.post(WORKFLOW_API, json={"ref": "master", "inputs": {"verify_email": email}},
-                      headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github.v3+json"})
+                      headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github.v3+json"}, timeout=15)
     return r.status_code == 204
 
 
-today = datetime.now()
+today = datetime.now(BJ_TZ).date()
 tabs = st.tabs(["单日查询", "批量查询", "推送设置"])
 
 with tabs[0]:
@@ -159,62 +160,71 @@ with tabs[2]:
     if not token:
         st.warning("未检测到 GITHUB_TOKEN，请在 Streamlit Cloud 的 Secrets 中添加。")
     else:
-        config = read_config(token)
-        saved_emails = config.get("receiver_emails", [])
-        if not saved_emails and config.get("receiver_email"):
-            saved_emails = [config["receiver_email"]]
+        config = None
+        try:
+            config = read_config(token)
+        except Exception as e:
+            st.error(f"无法读取订阅配置（GITHUB_TOKEN 可能已失效或无权限，请在 Streamlit Secrets 中更新）：{e}")
 
-        def save_emails(emails, token, cfg):
-            cfg["receiver_emails"] = emails
-            sha = None
-            try:
-                r = requests.get(GH_API, headers={"Authorization": f"Bearer {token}"})
-                if r.status_code == 200:
-                    sha = r.json()["sha"]
-            except:
-                pass
-            write_config(token, cfg, sha)
+        if config is not None:
+            saved_emails = config.get("receiver_emails", [])
+            if not saved_emails and config.get("receiver_email"):
+                saved_emails = [config["receiver_email"]]
 
-        st.markdown("### 邮件推送设置")
-        st.caption("每天早上 9:00 (北京时间) 自动推送前一交易日数据到所有已订阅邮箱。添加邮箱后通过 GitHub Actions 发送验证邮件（1-2 分钟到账）。")
+            def save_emails(emails, token, cfg):
+                cfg["receiver_emails"] = emails
+                sha = None
+                try:
+                    r = requests.get(GH_API, headers={"Authorization": f"Bearer {token}"}, timeout=15)
+                    if r.status_code == 200:
+                        sha = r.json()["sha"]
+                except Exception:
+                    pass
+                return write_config(token, cfg, sha)
 
-        st.markdown("**已订阅邮箱：**")
-        if saved_emails:
-            for i, em in enumerate(saved_emails):
-                c1, c2 = st.columns([5, 1])
-                c1.text(em)
-                if c2.button("退订", key=f"del_{i}"):
-                    saved_emails.pop(i)
-                    save_emails(saved_emails, token, config)
-                    st.rerun()
-        else:
-            st.info("暂无订阅")
+            st.markdown("### 邮件推送设置")
+            st.caption("每天自动推送前一交易日数据到所有已订阅邮箱（免费版调度有延迟，通常中午前后送达）。添加邮箱后通过 GitHub Actions 发送验证邮件（1-2 分钟到账）。")
 
-        new_email = st.text_input("添加邮箱", placeholder="new@email.com", key="new_email")
-        if st.button("添加", type="primary"):
-            if not new_email:
-                st.error("请输入邮箱")
-            elif not EMAIL_RE.match(new_email):
-                st.error("邮箱格式不正确，请检查后重试")
-            elif new_email in saved_emails:
-                st.warning("该邮箱已订阅")
+            st.markdown("**已订阅邮箱：**")
+            if saved_emails:
+                for i, em in enumerate(saved_emails):
+                    c1, c2 = st.columns([5, 1])
+                    c1.text(em)
+                    if c2.button("退订", key=f"del_{i}"):
+                        saved_emails.pop(i)
+                        if save_emails(saved_emails, token, config):
+                            st.rerun()
+                        else:
+                            st.error("退订保存失败，请重试")
             else:
-                saved_emails.append(new_email)
-                save_emails(saved_emails, token, config)
+                st.info("暂无订阅")
 
-                ok = trigger_verify_workflow(new_email, token)
-                if ok:
-                    st.session_state.add_result = f"已添加 {new_email}，验证邮件列队发送中（预计 1-2 分钟到账）"
+            new_email = st.text_input("添加邮箱", placeholder="new@email.com", key="new_email")
+            if st.button("添加", type="primary"):
+                if not new_email:
+                    st.error("请输入邮箱")
+                elif not EMAIL_RE.match(new_email):
+                    st.error("邮箱格式不正确，请检查后重试")
+                elif new_email in saved_emails:
+                    st.warning("该邮箱已订阅")
                 else:
-                    st.session_state.add_result = f"已添加 {new_email}（验证邮件触发失败，明早 9:00 将自动推送）"
-                st.rerun()
+                    saved_emails.append(new_email)
+                    if not save_emails(saved_emails, token, config):
+                        st.error("保存失败，请稍后重试")
+                    else:
+                        ok = trigger_verify_workflow(new_email, token)
+                        if ok:
+                            st.session_state.add_result = f"已添加 {new_email}，验证邮件列队发送中（预计 1-2 分钟到账）"
+                        else:
+                            st.session_state.add_result = f"已添加 {new_email}（验证邮件触发失败，明日将自动推送）"
+                        st.rerun()
 
-        if st.session_state.add_result:
-            st.success(st.session_state.add_result)
-            st.session_state.add_result = None
+            if st.session_state.add_result:
+                st.success(st.session_state.add_result)
+                st.session_state.add_result = None
 
-        st.markdown("**邮件格式示例：**")
-        st.code("前一交易日成交数据（单位：万亿元）\n\n日期 | 上交所股票 | 上交所基金 | 深交所股票 | 深交所基金\n--- | --- | --- | --- | ---\n2026-07-10 | 1.56 | 0.36 | 1.83 | 0.18\n\n如需退订，请访问：https://stockcrawler-qe3y5qgjgyceaazkpajrzd.streamlit.app/\n(数据来源：上交所、深交所官网)")
+            st.markdown("**邮件格式示例：**")
+            st.code("前一交易日成交数据（单位：万亿元）\n\n日期 | 上交所股票 | 上交所基金 | 深交所股票 | 深交所基金\n--- | --- | --- | --- | ---\n2026-07-10 | 1.56 | 0.36 | 1.83 | 0.18\n\n如需退订，请访问：https://stockcrawler-qe3y5qgjgyceaazkpajrzd.streamlit.app/\n(数据来源：上交所、深交所官网)")
 
 st.markdown("---")
 st.caption("仅供参考")

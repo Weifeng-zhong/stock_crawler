@@ -7,15 +7,10 @@ import traceback
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timezone, timedelta
-from chinese_calendar import is_workday
 
-from stock_api import fetch_sse, fetch_sse_stock, fetch_sse_fund, fetch_szse
+from stock_api import fetch_sse, fetch_sse_stock, fetch_sse_fund, fetch_szse, is_trading_day
 
 BJ_TZ = timezone(timedelta(hours=8))
-
-
-def is_trading_day(dt):
-    return is_workday(dt)
 
 
 def prev_trading_day(dt):

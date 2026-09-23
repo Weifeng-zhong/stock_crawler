@@ -1,3 +1,5 @@
+import time
+
 import requests
 from chinese_calendar import is_workday
 
@@ -9,7 +11,8 @@ TENCENT_SYMBOL = {
 
 
 def is_trading_day(dt):
-    return is_workday(dt)
+    # 调休上班的周末（如 2026-09-20、2026-10-10）不是交易日：交易所周末始终休市
+    return is_workday(dt) and dt.weekday() < 5
 
 SSE_HEADERS = {
     "Referer": "https://www.sse.com.cn/",
@@ -23,13 +26,21 @@ UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.3
 
 
 def _fetch_tencent_daily(symbol, date_str):
-    r = requests.get("https://web.ifzq.gtimg.cn/appstock/app/newfqkline/get",
-                     params={"param": f"{symbol},day,{date_str},{date_str},10,qfq"},
-                     headers=UA, timeout=15)
-    for row in r.json()["data"][symbol]["day"]:
-        if row[0] == date_str:
-            return round(float(row[8]) / 10000, 2)
-    return None
+    last_err = None
+    for attempt in range(2):
+        try:
+            r = requests.get("https://web.ifzq.gtimg.cn/appstock/app/newfqkline/get",
+                             params={"param": f"{symbol},day,{date_str},{date_str},10,qfq"},
+                             headers=UA, timeout=15)
+            for row in r.json()["data"][symbol]["day"]:
+                if row[0] == date_str:
+                    return round(float(row[8]) / 10000, 2)
+            return None
+        except Exception as e:
+            last_err = e
+            if attempt == 0:
+                time.sleep(2)
+    raise last_err
 
 
 def fetch_sse(date_str, code):
